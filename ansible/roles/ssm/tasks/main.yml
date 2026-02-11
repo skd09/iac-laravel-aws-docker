@@ -1,0 +1,64 @@
+---
+# =============================================================================
+# SSM Role - Fetch .env from AWS SSM Parameter Store
+# =============================================================================
+
+- name: Ensure AWS CLI is installed
+  apt:
+    name: awscli
+    state: present
+
+- name: Create AWS config directory
+  file:
+    path: /root/.aws
+    state: directory
+    mode: "0700"
+
+- name: Configure AWS CLI region
+  copy:
+    dest: /root/.aws/config
+    content: |
+      [default]
+      region = {{ aws_region }}
+      output = json
+    mode: "0644"
+
+- name: Fetch .env from SSM for each instance
+  shell: |
+    aws ssm get-parameter \
+      --name "/{{ project_name }}/{{ env }}/{{ item.1.id }}/.env" \
+      --with-decryption \
+      --query "Parameter.Value" \
+      --output text \
+      --region {{ aws_region }} \
+      > {{ apps_base_dir }}/{{ item.1.id }}/.env 2>/dev/null || echo "SSM_FETCH_FAILED"
+  args:
+    executable: /bin/bash
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+  register: ssm_result
+  failed_when: false
+
+- name: Create placeholder .env if SSM fetch failed
+  template:
+    src: env-placeholder.j2
+    dest: "{{ apps_base_dir }}/{{ item.item.1.id }}/.env"
+    mode: "0640"
+    owner: www-data
+    group: www-data
+  loop: "{{ ssm_result.results }}"
+  loop_control:
+    label: "{{ item.item.1.id }}"
+  when: "'SSM_FETCH_FAILED' in item.stdout"
+
+- name: Set .env permissions
+  file:
+    path: "{{ apps_base_dir }}/{{ item.1.id }}/.env"
+    owner: www-data
+    group: www-data
+    mode: "0640"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+  ignore_errors: true

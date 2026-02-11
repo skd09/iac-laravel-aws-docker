@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# Common Role - Default Variables
+# =============================================================================
+
+system_packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - unzip
+  - zip
+  - git
+  - vim
+  - htop
+  - jq
+  - awscli
+  - python3-pip
+  - acl
+  - net-tools
+  - tree
+
+upgrade_packages: true

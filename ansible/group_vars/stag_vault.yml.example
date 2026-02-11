@@ -1,0 +1,18 @@
+---
+# =============================================================================
+# STAG Secrets - TEMPLATE
+# =============================================================================
+# Copy to stag_vault.yml and fill in real values:
+#   cp stag_vault.yml.example stag_vault.yml
+#
+# NEVER commit stag_vault.yml to git!
+# =============================================================================
+
+# Database
+vault_db_host: ""
+vault_db_username: ""
+vault_db_password: ""
+
+# Redis (if using ElastiCache)
+vault_redis_host: ""
+vault_redis_password: ""

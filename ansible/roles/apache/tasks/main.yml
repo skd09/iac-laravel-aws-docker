@@ -1,0 +1,63 @@
+---
+# =============================================================================
+# Apache Role - Install and Configure Apache
+# =============================================================================
+
+- name: Install Apache
+  apt:
+    name:
+      - apache2
+    state: present
+    update_cache: yes
+
+- name: Enable Apache modules
+  apache2_module:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ apache_modules }}"
+  notify: Restart Apache
+
+- name: Configure Apache ports
+  template:
+    src: ports.conf.j2
+    dest: /etc/apache2/ports.conf
+    mode: "0644"
+  notify: Restart Apache
+
+- name: Create virtual host for each instance
+  template:
+    src: vhost-proxy.conf.j2
+    dest: "/etc/apache2/sites-available/{{ item.1.id }}.conf"
+    mode: "0644"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+  notify: Reload Apache
+
+# -----------------------------------------------------------------------------
+# Disable default Apache site (shows Apache2 default page)
+# -----------------------------------------------------------------------------
+- name: Disable default Apache site
+  command: a2dissite 000-default.conf
+  args:
+    removes: /etc/apache2/sites-enabled/000-default.conf
+  notify: Reload Apache
+  ignore_errors: true
+
+# -----------------------------------------------------------------------------
+# Enable app virtual hosts
+# -----------------------------------------------------------------------------
+- name: Enable app virtual hosts
+  command: "a2ensite {{ item.1.id }}.conf"
+  args:
+    creates: "/etc/apache2/sites-enabled/{{ item.1.id }}.conf"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+  notify: Reload Apache
+
+- name: Ensure Apache is started and enabled
+  systemd:
+    name: apache2
+    state: started
+    enabled: yes

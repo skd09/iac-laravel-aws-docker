@@ -1,0 +1,53 @@
+---
+# =============================================================================
+# PHP Role - Install PHP-FPM for All Required Versions
+# =============================================================================
+
+- name: Add PHP repository
+  apt_repository:
+    repo: ppa:ondrej/php
+    state: present
+    update_cache: yes
+
+- name: Install PHP packages for each version
+  apt:
+    name:
+      - "php{{ item }}"
+      - "php{{ item }}-fpm"
+      - "php{{ item }}-mysql"
+      - "php{{ item }}-mbstring"
+      - "php{{ item }}-xml"
+      - "php{{ item }}-curl"
+      - "php{{ item }}-zip"
+      - "php{{ item }}-gd"
+      - "php{{ item }}-bcmath"
+      - "php{{ item }}-intl"
+      - "php{{ item }}-soap"
+      - "php{{ item }}-redis"
+    state: present
+  loop: "{{ php_versions }}"
+
+- name: Check if Composer exists
+  stat:
+    path: /usr/local/bin/composer
+  register: composer_stat
+
+- name: Install Composer
+  shell: |
+    curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+  when: not composer_stat.stat.exists
+
+- name: Configure PHP-FPM pool for each version
+  template:
+    src: php-fpm-pool.conf.j2
+    dest: "/etc/php/{{ item }}/fpm/pool.d/www.conf"
+    mode: "0644"
+  loop: "{{ php_versions }}"
+  notify: Restart PHP-FPM
+
+- name: Start and enable PHP-FPM services
+  systemd:
+    name: "php{{ item }}-fpm"
+    state: started
+    enabled: yes
+  loop: "{{ php_versions }}"

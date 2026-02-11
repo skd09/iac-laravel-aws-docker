@@ -1,0 +1,128 @@
+---
+# =============================================================================
+# GLOBAL VARIABLES - Core Configuration
+# =============================================================================
+# This file contains GENERIC configuration that can be shared publicly.
+# Project-specific values (repo URLs, names) are in all_project.yml
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Base Directories on EC2
+# -----------------------------------------------------------------------------
+apps_base_dir: /var/www
+docker_dir: /opt/docker
+base_domain: "{{ vault_base_domain | default('example.com') }}"
+project_name: "{{ vault_project_name | default('myproject') }}"
+aws_region: "{{ vault_aws_region | default('us-east-1') }}"
+
+# -----------------------------------------------------------------------------
+# SSL Configuration
+# -----------------------------------------------------------------------------
+ssl_email: "{{ vault_ssl_email | default('admin@example.com') }}"
+enable_ssl: false
+
+# -----------------------------------------------------------------------------
+# Applications Configuration
+# -----------------------------------------------------------------------------
+# Define your Laravel apps here. Each app has:
+#   - name: identifier for the app group
+#   - repo: git repository URL (from vault)
+#   - php_version: which PHP to use in Docker
+#   - laravel_version: Laravel major version
+#   - queue_enabled / scheduler_enabled: optional features
+#   - instances: one or more deployable instances
+#
+# Customize this section for YOUR apps. The examples below show common patterns.
+#
+apps:
+  - name: app-api
+    repo: "{{ vault_repo_app_api }}"
+    php_version: "8.3"
+    laravel_version: 11
+    queue_enabled: true
+    scheduler_enabled: true
+    instances:
+      - id: app-api
+        subdomain: "api"
+        port: 8001
+        db_name: "app_api"
+        branches:
+          dev: "dev"
+          stag: "main"
+
+  - name: app-web
+    repo: "{{ vault_repo_app_web }}"
+    php_version: "8.2"
+    laravel_version: 11
+    queue_enabled: false
+    scheduler_enabled: false
+    instances:
+      - id: app-web
+        subdomain: "web"
+        port: 8002
+        db_name: "app_web"
+        branches:
+          dev: "dev"
+          stag: "main"
+
+  - name: app-admin
+    repo: "{{ vault_repo_app_admin }}"
+    php_version: "8.2"
+    laravel_version: 10
+    queue_enabled: true
+    scheduler_enabled: true
+    instances:
+      - id: app-admin
+        subdomain: "admin"
+        port: 8003
+        db_name: "app_admin"
+        branches:
+          dev: "dev"
+          stag: "main"
+
+# -----------------------------------------------------------------------------
+# PHP Versions Required
+# -----------------------------------------------------------------------------
+php_versions:
+  - "8.0"
+  - "8.1"
+  - "8.2"
+  - "8.3"
+
+# -----------------------------------------------------------------------------
+# System Packages
+# -----------------------------------------------------------------------------
+system_packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - software-properties-common
+  - unzip
+  - zip
+  - git
+  - vim
+  - htop
+  - jq
+  - awscli
+  - python3-pip
+  - acl
+  - rsync
+
+# -----------------------------------------------------------------------------
+# Apache Modules
+# -----------------------------------------------------------------------------
+apache_modules:
+  - proxy
+  - proxy_http
+  - proxy_fcgi
+  - setenvif
+  - rewrite
+  - headers
+  - ssl
+
+# -----------------------------------------------------------------------------
+# CodeDeploy Configuration
+# -----------------------------------------------------------------------------
+codedeploy_agent_url: "https://aws-codedeploy-{{ aws_region }}.s3.{{ aws_region }}.amazonaws.com/latest/install"

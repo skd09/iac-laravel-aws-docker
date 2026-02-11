@@ -1,0 +1,14 @@
+# =============================================================================
+# STAG Environment Inventory
+# =============================================================================
+# Copy this file to stag.ini and update the IP address:
+#   cp stag.ini.example stag.ini
+#   nano stag.ini  # Update YOUR_STAG_EC2_IP
+# =============================================================================
+
+[stag]
+stag-server ansible_host=YOUR_STAG_EC2_IP ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/myproject-stag-key.pem
+
+[stag:vars]
+env=stag
+ansible_python_interpreter=/usr/bin/python3

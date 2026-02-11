@@ -1,0 +1,98 @@
+---
+# =============================================================================
+# Full Setup Playbook
+# =============================================================================
+# This is the MAIN playbook that sets up an EC2 server from scratch.
+# It installs all required software and configures for CodeDeploy deployments.
+#
+# Usage:
+#   ansible-playbook -i inventories/dev.ini playbooks/full-setup.yml
+#   ansible-playbook -i inventories/stag.ini playbooks/full-setup.yml
+#
+# Or use the deploy script:
+#   ./scripts/deploy.sh dev
+#   ./scripts/deploy.sh stag
+#
+# What this playbook does:
+#   1. Installs system packages (git, curl, jq, etc.)
+#   2. Installs Docker and Docker Compose
+#   3. Installs PHP versions (8.0, 8.1, 8.2, 8.3)
+#   4. Configures Apache as reverse proxy
+#   5. Installs CodeDeploy agent
+#   6. Creates CodeDeploy lifecycle scripts
+#   7. Creates app directories under /var/www/
+#
+# Prerequisites:
+#   - EC2 instance running Ubuntu 22.04/24.04
+#   - SSH access configured in inventory file
+#   - IAM role with SSM and CodeDeploy permissions attached to EC2
+# =============================================================================
+
+- name: Full MyProject Setup
+  hosts: all                               # Run on all hosts in inventory
+  become: true                             # Use sudo for all tasks
+  gather_facts: true                       # Collect system information
+
+  # ---------------------------------------------------------------------------
+  # Load Variables
+  # ---------------------------------------------------------------------------
+  vars_files:
+    - ../group_vars/all.yml                # Global configuration
+
+  pre_tasks:
+    # Load environment-specific variables (dev.yml or stag.yml)
+    # The 'env' variable is set in the inventory file
+    - name: Load environment specific variables
+      include_vars:
+        file: "../group_vars/{{ env }}.yml"
+
+  # ---------------------------------------------------------------------------
+  # Execute Roles
+  # ---------------------------------------------------------------------------
+  # Roles are executed in order - some depend on others
+  roles:
+    - common              # Install system packages, create Docker network
+    - docker
+    - php                 # Install PHP versions (optional, for non-Docker use)
+    - apache              # Configure Apache as reverse proxy
+    - codedeploy-agent    # Install AWS CodeDeploy agent
+    - deploy              # Create app directories and CodeDeploy scripts
+    - ssm                 # Configure SSM access (optional)
+
+  # ---------------------------------------------------------------------------
+  # Post-Setup Verification
+  # ---------------------------------------------------------------------------
+  post_tasks:
+    # Verify PHP-FPM services are running
+    - name: Verify PHP-FPM services
+      systemd:
+        name: "php{{ item }}-fpm"
+        state: started
+      loop: "{{ php_versions }}"
+      ignore_errors: true                   # Don't fail if PHP not installed
+
+    # Verify Apache is running
+    - name: Verify Apache
+      systemd:
+        name: apache2
+        state: started
+
+    # Show completion message with next steps
+    - name: Show setup complete
+      debug:
+        msg:
+          - "============================================"
+          - "✅ Setup complete for {{ env }} environment"
+          - "============================================"
+          - ""
+          - "Apps configured (Docker ports):"
+          - "  - app-api:        port 8001 → https://app-api-{{ env }}.example.com"
+          - "  - app-worker:     port 8002 → https://app-worker-{{ env }}.example.com"
+          - "  - app-web:     port 8003 → https://app-web-{{ env }}.example.com"
+          - "  - app-admin: port 8005 → https://app-admin-{{ env }}.example.com"
+          - "  - app-dashboard:      port 8007 → https://app-dashboard-{{ env }}.example.com"
+          - ""
+          - "Next steps:"
+          - "  1. Ensure RDS security group allows this EC2's IP"
+          - "  2. Create SSM parameters: ./scripts/setup-ssm.sh {{ env }}"
+          - "  3. Push code to Bitbucket to trigger CodeDeploy"

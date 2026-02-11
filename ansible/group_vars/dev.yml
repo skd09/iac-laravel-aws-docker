@@ -1,0 +1,32 @@
+---
+# =============================================================================
+# DEV Environment Variables (Non-Sensitive)
+# =============================================================================
+# Sensitive values are in dev_vault.yml (gitignored)
+# =============================================================================
+
+env: dev
+
+# App settings
+app_env: dev
+app_debug: "true"
+log_level: debug
+
+# Database (non-sensitive)
+db_port: "3306"
+
+# Reference vault variables
+db_host: "{{ vault_db_host }}"
+db_username: "{{ vault_db_username }}"
+db_password: "{{ vault_db_password }}"
+
+# Redis (non-sensitive)
+redis_port: "6379"
+redis_host: "{{ vault_redis_host | default('127.0.0.1') }}"
+redis_password: "{{ vault_redis_password | default('') }}"
+
+# S3
+s3_bucket_prefix: "{{ project_name }}-dev"
+
+# SSL
+enable_ssl: false

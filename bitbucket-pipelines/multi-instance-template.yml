@@ -1,0 +1,124 @@
+# =============================================================================
+# Bitbucket Pipeline - Multi-Instance Deployment (Shared Codebase)
+# =============================================================================
+# Deploys the SAME codebase to multiple app instances (e.g., app-api + app-worker).
+# Useful when one Laravel repo serves multiple roles (API vs background worker).
+#
+# Branches:
+#   - dev             → deploys to app-api DEV
+#   - feature/worker  → deploys to app-worker DEV
+#   - stag            → deploys to app-api STAG
+#   - stag-worker     → deploys to app-worker STAG
+# =============================================================================
+
+image: amazon/aws-cli:latest
+
+definitions:
+  # Shared deployment script — all steps reference this
+  scripts:
+    - script: &deploy-script
+        - yum install -y zip
+        - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+        - echo $BITBUCKET_STEP_OIDC_TOKEN > $AWS_WEB_IDENTITY_TOKEN_FILE
+
+        # Package and upload
+        - ZIP_FILE="${APP_NAME}-${BITBUCKET_COMMIT}.zip"
+        - zip -r $ZIP_FILE . -x "*.git*" -x "node_modules/*" -x "vendor/*" -x "*.zip" -x "composer.lock" -x "storage/logs/*"
+        - aws s3 cp $ZIP_FILE s3://${S3_BUCKET}/$ZIP_FILE
+
+        # Cleanup — keep only last 5 artifacts
+        - |
+          ALL_ZIPS=$(aws s3 ls s3://${S3_BUCKET}/ --region $AWS_REGION | grep "${APP_NAME}-" | grep "\.zip" | sort | awk '{print $4}')
+          TOTAL_ZIPS=$(echo "$ALL_ZIPS" | grep -c . || echo 0)
+          if [ "$TOTAL_ZIPS" -gt 5 ]; then
+            DELETE_COUNT=$((TOTAL_ZIPS - 5))
+            echo "$ALL_ZIPS" | head -n $DELETE_COUNT | while read FILE; do
+              aws s3 rm "s3://${S3_BUCKET}/$FILE" --region $AWS_REGION
+            done
+          fi
+
+        # Trigger CodeDeploy
+        - >
+          aws deploy create-deployment
+          --application-name $CODEDEPLOY_APP
+          --deployment-group-name $DEPLOYMENT_GROUP
+          --s3-location bucket=${S3_BUCKET},key=${ZIP_FILE},bundleType=zip
+          --file-exists-behavior OVERWRITE
+          --region $AWS_REGION
+
+  steps:
+    # --- DEV: Primary app ---
+    - step: &deploy-primary-dev
+        name: Deploy App-API to DEV
+        oidc: true
+        script:
+          - export AWS_REGION="${AWS_REGION:-us-east-1}"
+          - export AWS_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketOIDCDeployRole"
+          - export APP_NAME="app-api"
+          - export S3_BUCKET="myproject-dev-codedeploy-artifacts"
+          - export CODEDEPLOY_APP="myproject-dev-apps"
+          - export DEPLOYMENT_GROUP="myproject-dev-${APP_NAME}"
+          - *deploy-script
+
+    # --- DEV: Worker app ---
+    - step: &deploy-worker-dev
+        name: Deploy App-Worker to DEV
+        oidc: true
+        script:
+          - export AWS_REGION="${AWS_REGION:-us-east-1}"
+          - export AWS_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketOIDCDeployRole"
+          - export APP_NAME="app-worker"
+          - export S3_BUCKET="myproject-dev-codedeploy-artifacts"
+          - export CODEDEPLOY_APP="myproject-dev-apps"
+          - export DEPLOYMENT_GROUP="myproject-dev-${APP_NAME}"
+          - *deploy-script
+
+    # --- STAG: Primary app ---
+    - step: &deploy-primary-stag
+        name: Deploy App-API to STAG
+        oidc: true
+        script:
+          - export AWS_REGION="${AWS_REGION:-us-east-1}"
+          - export AWS_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketOIDCDeployRole"
+          - export APP_NAME="app-api"
+          - export S3_BUCKET="myproject-stag-codedeploy-artifacts"
+          - export CODEDEPLOY_APP="myproject-stag-apps"
+          - export DEPLOYMENT_GROUP="myproject-stag-${APP_NAME}"
+          - *deploy-script
+
+    # --- STAG: Worker app ---
+    - step: &deploy-worker-stag
+        name: Deploy App-Worker to STAG
+        oidc: true
+        script:
+          - export AWS_REGION="${AWS_REGION:-us-east-1}"
+          - export AWS_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/BitbucketOIDCDeployRole"
+          - export APP_NAME="app-worker"
+          - export S3_BUCKET="myproject-stag-codedeploy-artifacts"
+          - export CODEDEPLOY_APP="myproject-stag-apps"
+          - export DEPLOYMENT_GROUP="myproject-stag-${APP_NAME}"
+          - *deploy-script
+
+# =============================================================================
+# Branch Triggers
+# =============================================================================
+pipelines:
+  branches:
+    dev:
+      - step: *deploy-primary-dev
+    feature/worker:
+      - step: *deploy-worker-dev
+    stag:
+      - step: *deploy-primary-stag
+    stag-worker:
+      - step: *deploy-worker-stag
+
+  custom:
+    deploy-primary-dev:
+      - step: *deploy-primary-dev
+    deploy-worker-dev:
+      - step: *deploy-worker-dev
+    deploy-primary-stag:
+      - step: *deploy-primary-stag
+    deploy-worker-stag:
+      - step: *deploy-worker-stag

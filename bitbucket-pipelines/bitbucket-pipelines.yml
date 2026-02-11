@@ -1,0 +1,88 @@
+# =============================================================================
+# Bitbucket Pipeline - MyProject CI/CD
+# =============================================================================
+#
+# SETUP INSTRUCTIONS:
+# 1. Copy this file to each Laravel app repository as: bitbucket-pipelines.yml
+# 2. Copy codedeploy/appspec.yml to Laravel repo root
+# 3. Copy codedeploy/scripts/wrapper.sh to Laravel repo at scripts/codedeploy/
+# 4. Set Repository Variables in Bitbucket (Settings → Repository Variables):
+#    - AWS_ACCESS_KEY_ID
+#    - AWS_SECRET_ACCESS_KEY
+#    - APP_NAME (e.g., "app-api", "app-worker", "app-web", "app-admin", "app-dashboard")
+#
+# BRANCH MAPPING:
+# - develop, dev, test → DEV environment
+# - staging, main, master, release → STAG environment
+#
+# =============================================================================
+
+image: atlassian/default-image:3
+
+definitions:
+  steps:
+    - step: &deploy-dev
+        name: Deploy to DEV
+        deployment: development
+        script:
+          - echo "Deploying ${APP_NAME} to DEV environment..."
+          - pipe: atlassian/aws-code-deploy:1.1.1
+            variables:
+              AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+              AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+              AWS_DEFAULT_REGION: 'ca-central-1'
+              APPLICATION_NAME: 'myproject-dev-apps'
+              DEPLOYMENT_GROUP: 'myproject-dev-${APP_NAME}'
+              S3_BUCKET: 'myproject-dev-codedeploy-artifacts'
+              COMMAND: 'upload'
+              IGNORE_APPLICATION_STOP_FAILURES: 'true'
+              FILE_EXISTS_BEHAVIOR: 'OVERWRITE'
+              
+    - step: &deploy-stag
+        name: Deploy to STAG
+        deployment: staging
+        script:
+          - echo "Deploying ${APP_NAME} to STAG environment..."
+          - pipe: atlassian/aws-code-deploy:1.1.1
+            variables:
+              AWS_ACCESS_KEY_ID: $AWS_ACCESS_KEY_ID
+              AWS_SECRET_ACCESS_KEY: $AWS_SECRET_ACCESS_KEY
+              AWS_DEFAULT_REGION: 'ca-central-1'
+              APPLICATION_NAME: 'myproject-stag-apps'
+              DEPLOYMENT_GROUP: 'myproject-stag-${APP_NAME}'
+              S3_BUCKET: 'myproject-stag-codedeploy-artifacts'
+              COMMAND: 'upload'
+              IGNORE_APPLICATION_STOP_FAILURES: 'true'
+              FILE_EXISTS_BEHAVIOR: 'OVERWRITE'
+
+pipelines:
+  # =============================================================================
+  # Branch-based deployments
+  # =============================================================================
+  branches:
+    # DEV deployments
+    develop:
+      - step: *deploy-dev
+    dev:
+      - step: *deploy-dev
+    test:
+      - step: *deploy-dev
+    
+    # STAG deployments  
+    staging:
+      - step: *deploy-stag
+    main:
+      - step: *deploy-stag
+    master:
+      - step: *deploy-stag
+    release:
+      - step: *deploy-stag
+
+  # =============================================================================
+  # Manual deployments (optional)
+  # =============================================================================
+  custom:
+    deploy-to-dev:
+      - step: *deploy-dev
+    deploy-to-stag:
+      - step: *deploy-stag

@@ -1,0 +1,6 @@
+---
+- name: Restart PHP-FPM
+  systemd:
+    name: "php{{ item }}-fpm"
+    state: restarted
+  loop: "{{ php_versions }}"

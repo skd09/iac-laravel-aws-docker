@@ -1,0 +1,29 @@
+---
+# =============================================================================
+# PROJECT-SPECIFIC VARIABLES - TEMPLATE
+# =============================================================================
+# Copy to all_project.yml and fill in your values:
+#   cp all_project.yml.example all_project.yml
+#
+# NEVER commit all_project.yml to git!
+# =============================================================================
+
+# Project Identification
+vault_project_name: "myproject"
+ops_name: "myproject-devops"
+vault_aws_region: "us-east-1"
+vault_base_domain: "example.com"
+
+# Git Repositories
+vault_repo_app_api: "git@bitbucket.org:yourorg/app-api.git"
+vault_repo_app_web: "git@bitbucket.org:yourorg/app-web.git"
+vault_repo_app_admin: "git@bitbucket.org:yourorg/app-admin.git"
+
+# AWS Account
+aws_account_id: "123456789012"
+
+# Email for SSL/Alerts
+vault_ssl_email: "admin@example.com"
+
+# CodeDeploy Agent URL (region-specific)
+codedeploy_agent_url: "https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install"

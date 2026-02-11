@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# Setup Server Playbook
+# Usage: ansible-playbook -i inventories/dev.ini playbooks/setup-server.yml
+# =============================================================================
+
+- name: Setup MyProject Server
+  hosts: all
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Display setup information
+      debug:
+        msg:
+          - "Setting up {{ env }} environment"
+          - "Server: {{ inventory_hostname }}"
+
+  roles:
+    - common
+    - docker
+    - apache
+    - codedeploy-agent
+
+  post_tasks:
+    - name: Create Docker network
+      command: docker network create myproject-network
+      ignore_errors: true
+
+    - name: Display completion message
+      debug:
+        msg:
+          - "Server setup complete!"
+          - "Next: ansible-playbook -i inventories/{{ env }}.ini playbooks/deploy.yml"

@@ -1,0 +1,43 @@
+# =============================================================================
+# DEV Environment - Configuration
+# =============================================================================
+# Copy to terraform.auto.tfvars and customize:
+#   cp terraform.auto.tfvars.example terraform.auto.tfvars
+# =============================================================================
+
+environment = "dev"
+
+# Feature Toggles
+create_vpc         = false
+create_rds         = false
+create_elasticache = false
+create_s3          = true
+create_codedeploy  = true
+create_ssh_key     = true
+create_eip         = true
+enable_monitoring  = false
+
+# VPC (if create_vpc = true)
+vpc_cidr           = "10.10.0.0/16"
+availability_zones = ["ca-central-1a", "ca-central-1b"]
+enable_nat_gateway = false
+
+# EC2
+ec2_instance_type    = "t3.medium"
+ec2_root_volume_size = 30
+ec2_root_volume_type = "gp3"
+
+# S3
+s3_bucket_suffixes = [
+  "codedeploy-artifacts",
+  "app1-uploads",
+  "app2-uploads",
+]
+s3_artifact_expiration_days   = 90
+s3_noncurrent_expiration_days = 30
+
+# CodeDeploy
+codedeploy_apps = ["app1", "app2", "app3"]
+
+# Monitoring
+cpu_threshold = 80

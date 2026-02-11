@@ -1,0 +1,42 @@
+---
+# =============================================================================
+# Common Role - Install Base Packages
+# =============================================================================
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: Install system packages
+  apt:
+    name: "{{ system_packages }}"
+    state: present
+
+- name: Install required packages for CodeDeploy
+  apt:
+    name:
+      - jq
+      - rsync
+      - curl
+      - unzip
+      - protobuf-compiler
+    state: present
+  tags: [packages]
+
+- name: Set timezone
+  timezone:
+    name: UTC
+
+- name: Create www-data group
+  group:
+    name: www-data
+    state: present
+
+- name: Ensure www-data user exists
+  user:
+    name: www-data
+    group: www-data
+    shell: /usr/sbin/nologin
+    create_home: no
+    state: present

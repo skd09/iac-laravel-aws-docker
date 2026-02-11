@@ -1,0 +1,18 @@
+---
+# =============================================================================
+# DEV Secrets - TEMPLATE
+# =============================================================================
+# Copy to dev_vault.yml and fill in real values:
+#   cp dev_vault.yml.example dev_vault.yml
+#
+# NEVER commit dev_vault.yml to git!
+# =============================================================================
+
+# Database
+vault_db_host: ""
+vault_db_username: ""
+vault_db_password: ""
+
+# Redis (if using ElastiCache)
+vault_redis_host: ""
+vault_redis_password: ""

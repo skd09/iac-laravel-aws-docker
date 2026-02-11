@@ -1,0 +1,34 @@
+---
+# =============================================================================
+# STAG (Staging) Environment Variables
+# =============================================================================
+# This file overrides values from all.yml for the STAGING environment.
+#
+# NOTE: Actual .env values for Laravel apps are stored in AWS SSM Parameter
+#       Store at: /{project_name}/stag/{app}/.env
+#       Use scripts/setup-ssm.sh to manage them.
+# =============================================================================
+
+env: stag
+
+# Database Configuration
+db_host: "{{ vault_db_host }}"
+db_port: "3306"
+db_username: "{{ vault_db_username }}"
+db_password: "{{ vault_db_password }}"
+
+# Redis Configuration
+redis_host: "{{ vault_redis_host | default('127.0.0.1') }}"
+redis_port: "6379"
+redis_password: "{{ vault_redis_password | default('') }}"
+
+# Application Settings
+app_env: staging
+app_debug: "false"
+log_level: info
+
+# AWS S3 Bucket Prefix
+s3_bucket_prefix: "{{ project_name }}-stag"
+
+# SSL Configuration (terminated at Cloudflare)
+enable_ssl: false

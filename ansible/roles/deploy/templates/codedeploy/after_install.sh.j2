@@ -1,0 +1,297 @@
+#!/bin/bash
+# =============================================================================
+# CodeDeploy - After Install
+# =============================================================================
+# This script runs AFTER CodeDeploy extracts the deployment package.
+# Purpose:
+#   1. Copy code to app directory
+#   2. Fetch .env from AWS SSM Parameter Store
+#   3. Generate Dockerfile and docker-compose files
+#   4. Set correct permissions
+# =============================================================================
+
+set -e
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           CODEDEPLOY - AFTER INSTALL                         ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+
+# =============================================================================
+# Load instance configuration
+# =============================================================================
+INSTANCE_ID=$(cat /tmp/codedeploy_instance_id)
+ENV=$(cat /tmp/codedeploy_env 2>/dev/null || echo "dev")
+
+echo "Instance ID: $INSTANCE_ID"
+echo "Environment: $ENV"
+
+# Source the instance mapping to get APP_DIR, DOCKER_PORT, etc.
+if [ -f /opt/scripts/instance-mapping.sh ]; then
+    source /opt/scripts/instance-mapping.sh
+    get_instance_config "$INSTANCE_ID" "$ENV"
+else
+    echo "ERROR: Instance mapping not found at /opt/scripts/instance-mapping.sh"
+    echo "Please run Ansible to install server scripts first."
+    exit 1
+fi
+
+if [ -z "$APP_DIR" ]; then
+    echo "ERROR: Unknown instance: $INSTANCE_ID"
+    echo "Check /opt/scripts/instance-mapping.sh for valid instances."
+    exit 1
+fi
+
+CONTAINER_NAME="${INSTANCE_ID}-${ENV}-app"
+
+echo ""
+echo "Configuration:"
+echo "  App Name: $APP_NAME"
+echo "  App Dir: $APP_DIR"
+echo "  Docker Port: $DOCKER_PORT"
+echo "  App URL: $APP_URL"
+echo "  Container: $CONTAINER_NAME"
+
+# Save for later hooks
+echo "$APP_DIR" > /tmp/codedeploy_app_dir
+echo "$CONTAINER_NAME" > /tmp/codedeploy_container_name
+
+# =============================================================================
+# Ensure Docker network exists
+# =============================================================================
+if ! docker network ls --format '{% raw %}{{.Name}}{% endraw %}' | grep -q "^myproject-network$"; then
+    echo ""
+    echo "Creating Docker network: myproject-network"
+    docker network create myproject-network
+fi
+
+# =============================================================================
+# Copy code from deployment source
+# =============================================================================
+SOURCE_DIR="/tmp/codedeploy-source"
+
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "ERROR: Source directory not found: $SOURCE_DIR"
+    exit 1
+fi
+
+echo ""
+echo "Copying code to $APP_DIR..."
+
+mkdir -p "$APP_DIR"
+
+# Preserve storage directory
+STORAGE_BACKUP=""
+if [ -d "$APP_DIR/storage" ]; then
+    echo "Backing up existing storage directory..."
+    STORAGE_BACKUP="/tmp/storage_backup_${INSTANCE_ID}_$$"
+    cp -a "$APP_DIR/storage" "$STORAGE_BACKUP"
+fi
+
+# Copy code using rsync
+rsync -av --delete \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='vendor' \
+    --exclude='composer.lock' \
+    --exclude='.env' \
+    --exclude='docker-compose.yml' \
+    --exclude='docker-compose.override.yml' \
+    --exclude='*.zip' \
+    "${SOURCE_DIR}/" "${APP_DIR}/"
+
+echo "✓ Code copied"
+
+# Restore storage directory
+if [ -n "$STORAGE_BACKUP" ] && [ -d "$STORAGE_BACKUP" ]; then
+    echo "Restoring storage directory..."
+    rm -rf "$APP_DIR/storage"
+    mv "$STORAGE_BACKUP" "$APP_DIR/storage"
+fi
+
+# Ensure Laravel storage directories exist
+echo "Ensuring storage directories exist..."
+mkdir -p "$APP_DIR/storage/app/public"
+mkdir -p "$APP_DIR/storage/framework/cache/data"
+mkdir -p "$APP_DIR/storage/framework/sessions"
+mkdir -p "$APP_DIR/storage/framework/views"
+mkdir -p "$APP_DIR/storage/logs"
+mkdir -p "$APP_DIR/bootstrap/cache"
+
+# =============================================================================
+# Fetch .env from AWS SSM Parameter Store
+# =============================================================================
+echo ""
+echo "Fetching .env from SSM..."
+SSM_PARAM_NAME="/{{ project_name }}/${ENV}/${INSTANCE_ID}/.env"
+
+if aws ssm get-parameter \
+    --name "$SSM_PARAM_NAME" \
+    --with-decryption \
+    --query 'Parameter.Value' \
+    --output text \
+    --region {{ aws_region }} > "$APP_DIR/.env" 2>/dev/null; then
+    echo "✓ .env fetched from SSM: $SSM_PARAM_NAME"
+else
+    echo "⚠️  WARNING: Could not fetch .env from SSM: $SSM_PARAM_NAME"
+    if [ -f "$APP_DIR/.env.example" ]; then
+        cp "$APP_DIR/.env.example" "$APP_DIR/.env"
+        echo "   Copied .env.example (NEEDS CONFIGURATION!)"
+    else
+        echo "   Creating minimal .env..."
+        cat > "$APP_DIR/.env" << ENVFILE
+APP_NAME="${INSTANCE_ID}"
+APP_ENV=${ENV}
+APP_DEBUG=true
+APP_URL=${APP_URL}
+LOG_CHANNEL=stack
+LOG_LEVEL=debug
+ENVFILE
+    fi
+fi
+
+# =============================================================================
+# Create .htaccess if missing
+# =============================================================================
+if [ ! -f "$APP_DIR/public/.htaccess" ]; then
+    echo "Creating .htaccess..."
+    cat > "$APP_DIR/public/.htaccess" << 'HTACCESS'
+<IfModule mod_rewrite.c>
+    <IfModule mod_negotiation.c>
+        Options -MultiViews -Indexes
+    </IfModule>
+
+    RewriteEngine On
+
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} (.+)/$
+    RewriteRule ^ %1 [L,R=301]
+
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>
+HTACCESS
+    echo "✓ .htaccess created"
+fi
+
+# =============================================================================
+# Detect PHP version from composer.json
+# =============================================================================
+echo ""
+echo "Detecting PHP version..."
+PHP_VERSION="8.2"
+
+if [ -f "$APP_DIR/composer.json" ]; then
+    if command -v jq &> /dev/null; then
+        PHP_REQUIRE=$(jq -r '.require.php // empty' "$APP_DIR/composer.json" 2>/dev/null)
+    else
+        PHP_REQUIRE=$(grep -o '"php"[^,]*' "$APP_DIR/composer.json" 2>/dev/null | head -1)
+    fi
+    
+    if [ -n "$PHP_REQUIRE" ]; then
+        DETECTED=$(echo "$PHP_REQUIRE" | grep -oE '[0-9]+\.[0-9]+' | sort -V | tail -1)
+        if [ -n "$DETECTED" ]; then
+            PHP_VERSION="$DETECTED"
+        fi
+    fi
+fi
+
+case "$PHP_VERSION" in
+    8.0|8.1|8.2|8.3|8.4) ;;
+    *) PHP_VERSION="8.2" ;;
+esac
+
+echo "Using PHP version: $PHP_VERSION"
+echo "$PHP_VERSION" > /tmp/codedeploy_php_version
+
+# =============================================================================
+# Generate Dockerfile.server
+# =============================================================================
+echo ""
+echo "Generating Dockerfile.server..."
+cat > "$APP_DIR/Dockerfile.server" << DOCKERFILE
+# Auto-generated by CodeDeploy - DO NOT EDIT
+FROM php:${PHP_VERSION}-apache
+
+RUN apt-get update && apt-get install -y \\
+    git curl libpng-dev libonig-dev libxml2-dev \\
+    zip unzip libzip-dev libicu-dev libfreetype6-dev libjpeg-dev \\
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \\
+    && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip intl opcache \\
+    && a2enmod rewrite headers \\
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+RUN echo "memory_limit=256M" >> /usr/local/etc/php/conf.d/laravel.ini \\
+    && echo "upload_max_filesize=64M" >> /usr/local/etc/php/conf.d/laravel.ini \\
+    && echo "post_max_size=64M" >> /usr/local/etc/php/conf.d/laravel.ini \\
+    && echo "max_execution_time=300" >> /usr/local/etc/php/conf.d/laravel.ini
+
+RUN sed -i 's|/var/www/html|/var/www/html/public|g' /etc/apache2/sites-available/000-default.conf
+
+WORKDIR /var/www/html
+EXPOSE 80
+CMD ["apache2-foreground"]
+DOCKERFILE
+
+echo "✓ Dockerfile.server generated"
+
+# =============================================================================
+# Generate docker-compose.server.yml
+# =============================================================================
+echo "Generating docker-compose.server.yml..."
+cat > "$APP_DIR/docker-compose.server.yml" << COMPOSE
+# Auto-generated by CodeDeploy - DO NOT EDIT
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: ${CONTAINER_NAME}
+    restart: unless-stopped
+    ports:
+      - "${DOCKER_PORT}:80"
+    volumes:
+      - .:/var/www/html
+      - ./storage:/var/www/html/storage
+    environment:
+      - APP_ENV=${ENV}
+    networks:
+      - myproject-network
+
+networks:
+  myproject-network:
+    external: true
+COMPOSE
+
+echo "✓ docker-compose.server.yml generated"
+
+# =============================================================================
+# Set file permissions
+# =============================================================================
+echo ""
+echo "Setting permissions..."
+
+chown -R ubuntu:ubuntu "$APP_DIR"
+chmod -R 755 "$APP_DIR"
+
+chown -R ubuntu:www-data "$APP_DIR/storage"
+chown -R ubuntu:www-data "$APP_DIR/bootstrap/cache"
+chmod -R 775 "$APP_DIR/storage"
+chmod -R 775 "$APP_DIR/bootstrap/cache"
+
+if [ -f "$APP_DIR/.env" ]; then
+    chown ubuntu:www-data "$APP_DIR/.env"
+    chmod 640 "$APP_DIR/.env"
+fi
+
+echo "✓ Permissions set"
+
+echo ""
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           ✓ AFTER INSTALL COMPLETE                           ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"

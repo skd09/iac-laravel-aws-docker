@@ -1,0 +1,162 @@
+# =============================================================================
+# Bitbucket Pipeline - Single App Deployment
+# =============================================================================
+# For: app-dashboard, app-web, app-admin
+# 
+# Usage: Copy to your Laravel repo and update APP_NAME
+# =============================================================================
+
+image: amazon/aws-cli:latest
+
+definitions:
+  steps:
+    # -------------------------------------------------------------------------
+    # DEV Deployment
+    # -------------------------------------------------------------------------
+    - step: &deploy-dev
+        name: Deploy to DEV
+        oidc: true
+        script:
+          - echo "Deploying to DEV..."
+          
+          # Install zip
+          - yum install -y zip
+          
+          # Configure AWS with OIDC
+          - export AWS_REGION="ca-central-1"
+          - export AWS_ROLE_ARN="arn:aws:iam::123456789012:role/BitbucketOIDCDeployRole"
+          - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+          - echo $BITBUCKET_STEP_OIDC_TOKEN > $AWS_WEB_IDENTITY_TOKEN_FILE
+          
+          # =====================================================
+          # CONFIGURE: Change APP_NAME for your app
+          # Options: app-dashboard, app-web, app-admin
+          # =====================================================
+          - export APP_NAME="app-dashboard"
+          - export S3_BUCKET="myproject-dev-codedeploy-artifacts"
+          - export CODEDEPLOY_APP="myproject-dev-apps"
+          - export DEPLOYMENT_GROUP="myproject-dev-${APP_NAME}"
+          
+          # Create zip file (exclude unnecessary files)
+          - ZIP_FILE="${APP_NAME}-${BITBUCKET_COMMIT}.zip"
+          - zip -r $ZIP_FILE . -x "*.git*" -x "node_modules/*" -x "vendor/*" -x "*.zip" -x "composer.lock" -x "storage/logs/*" -x "storage/framework/cache/*"
+          
+          # Upload to S3
+          - aws s3 cp $ZIP_FILE s3://${S3_BUCKET}/$ZIP_FILE
+          
+          # Cleanup: Keep only 5 most recent zip files for rollback
+          - echo "Cleaning up old zip files..."
+          - |
+            ALL_ZIPS=$(aws s3 ls s3://${S3_BUCKET}/ --region $AWS_REGION \
+              | grep "${APP_NAME}-" \
+              | grep "\.zip" \
+              | sort \
+              | awk '{print $4}')
+            
+            if [ -z "$ALL_ZIPS" ]; then
+              TOTAL_ZIPS=0
+            else
+              TOTAL_ZIPS=$(echo "$ALL_ZIPS" | wc -l)
+            fi
+            echo "Total ${APP_NAME} zip files: $TOTAL_ZIPS"
+            
+            if [ "$TOTAL_ZIPS" -gt 5 ]; then
+              DELETE_COUNT=$((TOTAL_ZIPS - 5))
+              echo "Deleting $DELETE_COUNT old zip file(s)..."
+              TO_DELETE=$(echo "$ALL_ZIPS" | head -n $DELETE_COUNT)
+              for FILE in $TO_DELETE; do
+                echo "Deleting: s3://${S3_BUCKET}/$FILE"
+                aws s3 rm "s3://${S3_BUCKET}/$FILE" --region $AWS_REGION
+              done
+            fi
+          
+          # Trigger CodeDeploy
+          - >
+            aws deploy create-deployment
+            --application-name $CODEDEPLOY_APP
+            --deployment-group-name $DEPLOYMENT_GROUP
+            --s3-location bucket=${S3_BUCKET},key=${ZIP_FILE},bundleType=zip
+            --file-exists-behavior OVERWRITE
+            --region $AWS_REGION
+
+    # -------------------------------------------------------------------------
+    # STAG Deployment
+    # -------------------------------------------------------------------------
+    - step: &deploy-stag
+        name: Deploy to STAG
+        oidc: true
+        script:
+          - echo "Deploying to STAG..."
+          
+          # Install zip
+          - yum install -y zip
+          
+          # Configure AWS with OIDC
+          - export AWS_REGION="ca-central-1"
+          - export AWS_ROLE_ARN="arn:aws:iam::123456789012:role/BitbucketOIDCDeployRole"
+          - export AWS_WEB_IDENTITY_TOKEN_FILE=$(pwd)/web-identity-token
+          - echo $BITBUCKET_STEP_OIDC_TOKEN > $AWS_WEB_IDENTITY_TOKEN_FILE
+          
+          # =====================================================
+          # CONFIGURE: Change APP_NAME for your app
+          # Options: app-dashboard, app-web, app-admin
+          # =====================================================
+          - export APP_NAME="app-dashboard"
+          - export S3_BUCKET="myproject-stag-codedeploy-artifacts"
+          - export CODEDEPLOY_APP="myproject-stag-apps"
+          - export DEPLOYMENT_GROUP="myproject-stag-${APP_NAME}"
+          
+          # Create zip file
+          - ZIP_FILE="${APP_NAME}-${BITBUCKET_COMMIT}.zip"
+          - zip -r $ZIP_FILE . -x "*.git*" -x "node_modules/*" -x "vendor/*" -x "*.zip" -x "composer.lock" -x "storage/logs/*" -x "storage/framework/cache/*"
+          
+          # Upload to S3
+          - aws s3 cp $ZIP_FILE s3://${S3_BUCKET}/$ZIP_FILE
+          
+          # Cleanup: Keep only 5 most recent
+          - |
+            ALL_ZIPS=$(aws s3 ls s3://${S3_BUCKET}/ --region $AWS_REGION \
+              | grep "${APP_NAME}-" \
+              | grep "\.zip" \
+              | sort \
+              | awk '{print $4}')
+            
+            if [ -z "$ALL_ZIPS" ]; then
+              TOTAL_ZIPS=0
+            else
+              TOTAL_ZIPS=$(echo "$ALL_ZIPS" | wc -l)
+            fi
+            
+            if [ "$TOTAL_ZIPS" -gt 5 ]; then
+              DELETE_COUNT=$((TOTAL_ZIPS - 5))
+              TO_DELETE=$(echo "$ALL_ZIPS" | head -n $DELETE_COUNT)
+              for FILE in $TO_DELETE; do
+                aws s3 rm "s3://${S3_BUCKET}/$FILE" --region $AWS_REGION
+              done
+            fi
+          
+          # Trigger CodeDeploy
+          - >
+            aws deploy create-deployment
+            --application-name $CODEDEPLOY_APP
+            --deployment-group-name $DEPLOYMENT_GROUP
+            --s3-location bucket=${S3_BUCKET},key=${ZIP_FILE},bundleType=zip
+            --file-exists-behavior OVERWRITE
+            --region $AWS_REGION
+
+# =============================================================================
+# Branch Triggers
+# =============================================================================
+pipelines:
+  branches:
+    dev:
+      - step: *deploy-dev
+    stag:
+      - step: *deploy-stag
+
+  # Manual triggers
+  custom:
+    deploy-to-dev:
+      - step: *deploy-dev
+    deploy-to-stag:
+      - step: *deploy-stag

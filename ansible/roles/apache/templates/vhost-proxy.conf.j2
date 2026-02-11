@@ -1,0 +1,78 @@
+# =============================================================================
+# {{ item.1.id | upper }} - {{ env | upper }}
+# URL: {{ item.1.subdomain }}-{{ env }}.{{ base_domain }}
+# Port: {{ item.1.port }}
+# PHP: {{ item.0.php_version }}
+# =============================================================================
+
+<VirtualHost *:{{ item.1.port }}>
+    ServerName {{ item.1.subdomain }}-{{ env }}.{{ base_domain }}
+    ServerAdmin {{ ssl_email }}
+    DocumentRoot {{ apps_base_dir }}/{{ item.1.id }}/public
+
+    <Directory {{ apps_base_dir }}/{{ item.1.id }}/public>
+        AllowOverride All
+        Require all granted
+        Options -Indexes +FollowSymLinks
+    </Directory>
+
+    # PHP-FPM via Unix Socket
+    <FilesMatch \.php$>
+        SetHandler "proxy:unix:/var/run/php/php{{ item.0.php_version }}-fpm.sock|fcgi://localhost"
+    </FilesMatch>
+
+    # Security Headers
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+
+    ErrorLog /var/log/apache2/{{ item.1.id }}-{{ env }}-error.log
+    CustomLog /var/log/apache2/{{ item.1.id }}-{{ env }}-access.log combined
+</VirtualHost>
+
+# Proxy from port 80 to app port
+<VirtualHost *:80>
+    ServerName {{ item.1.subdomain }}-{{ env }}.{{ base_domain }}
+    ServerAdmin {{ ssl_email }}
+
+    ProxyPreserveHost On
+    ProxyPass / http://127.0.0.1:{{ item.1.port }}/
+    ProxyPassReverse / http://127.0.0.1:{{ item.1.port }}/
+
+    RequestHeader set X-Forwarded-Proto "http"
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+    RequestHeader set X-Forwarded-For "%{REMOTE_ADDR}s"
+
+    ProxyTimeout 300
+
+    ErrorLog /var/log/apache2/{{ item.1.id }}-{{ env }}-error.log
+    CustomLog /var/log/apache2/{{ item.1.id }}-{{ env }}-access.log combined
+
+{% if enable_ssl %}
+    RewriteEngine On
+    RewriteCond %{HTTPS} off
+    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+{% endif %}
+</VirtualHost>
+
+{% if enable_ssl %}
+<VirtualHost *:443>
+    ServerName {{ item.1.subdomain }}-{{ env }}.{{ base_domain }}
+    ServerAdmin {{ ssl_email }}
+
+    SSLEngine on
+    SSLCertificateFile /etc/letsencrypt/live/{{ item.1.subdomain }}-{{ env }}.{{ base_domain }}/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/{{ item.1.subdomain }}-{{ env }}.{{ base_domain }}/privkey.pem
+
+    ProxyPreserveHost On
+    ProxyPass / http://127.0.0.1:{{ item.1.port }}/
+    ProxyPassReverse / http://127.0.0.1:{{ item.1.port }}/
+
+    RequestHeader set X-Forwarded-Proto "https"
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+    ErrorLog /var/log/apache2/{{ item.1.id }}-{{ env }}-ssl-error.log
+    CustomLog /var/log/apache2/{{ item.1.id }}-{{ env }}-ssl-access.log combined
+</VirtualHost>
+{% endif %}

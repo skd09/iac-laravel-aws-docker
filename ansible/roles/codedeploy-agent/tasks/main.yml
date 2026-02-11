@@ -1,0 +1,41 @@
+---
+# =============================================================================
+# CodeDeploy Agent Role
+# =============================================================================
+
+- name: Install CodeDeploy dependencies
+  apt:
+    name:
+      - ruby-full
+      - wget
+    state: present
+
+- name: Check if CodeDeploy agent is installed
+  stat:
+    path: /opt/codedeploy-agent/bin/codedeploy-agent
+  register: codedeploy_installed
+
+- name: Download CodeDeploy installer
+  get_url:
+    url: "{{ codedeploy_agent_url }}"
+    dest: /tmp/codedeploy-install
+    mode: "0755"
+  when: not codedeploy_installed.stat.exists
+
+- name: Install CodeDeploy agent
+  command: /tmp/codedeploy-install auto
+  args:
+    creates: /opt/codedeploy-agent/bin/codedeploy-agent
+  when: not codedeploy_installed.stat.exists
+
+- name: Start and enable CodeDeploy agent
+  systemd:
+    name: codedeploy-agent
+    state: started
+    enabled: yes
+
+- name: Verify CodeDeploy agent is running
+  command: service codedeploy-agent status
+  register: codedeploy_status
+  changed_when: false
+  failed_when: false

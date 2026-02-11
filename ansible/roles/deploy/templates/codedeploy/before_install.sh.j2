@@ -1,0 +1,67 @@
+#!/bin/bash
+# =============================================================================
+# CodeDeploy - Before Install
+# =============================================================================
+# This script runs BEFORE CodeDeploy extracts the deployment package.
+# Purpose:
+#   1. Extract instance ID from deployment group name
+#   2. Stop existing Docker container
+#   3. Clean up previous deployment source
+# =============================================================================
+
+set -e
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           CODEDEPLOY - BEFORE INSTALL                        ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+
+DEPLOYMENT_GROUP="${DEPLOYMENT_GROUP_NAME:-unknown}"
+echo "Deployment Group: $DEPLOYMENT_GROUP"
+
+# =============================================================================
+# Extract instance ID from deployment group name
+# Format: {{ project_name }}-{env}-{instance_id}
+# Example: myproject-dev-app-api → app-api
+#          myproject-stag-app-dashboard → app-dashboard
+# =============================================================================
+INSTANCE_ID=$(echo "$DEPLOYMENT_GROUP" | sed 's/{{ project_name }}-[a-z]*-//')
+echo "Instance ID: $INSTANCE_ID"
+
+# Extract environment
+ENV=$(echo "$DEPLOYMENT_GROUP" | sed -n 's/{{ project_name }}-\([a-z]*\)-.*/\1/p')
+ENV="${ENV:-dev}"
+echo "Environment: $ENV"
+
+# Save for later hooks
+echo "$INSTANCE_ID" > /tmp/codedeploy_instance_id
+echo "$ENV" > /tmp/codedeploy_env
+
+# =============================================================================
+# Stop existing Docker container
+# =============================================================================
+CONTAINER_NAME="${INSTANCE_ID}-${ENV}-app"
+echo "Checking for existing container: $CONTAINER_NAME"
+
+if docker ps -a --format '{% raw %}{{.Names}}{% endraw %}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo "Stopping existing container..."
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    echo "Container stopped"
+else
+    echo "No existing container found"
+fi
+
+# =============================================================================
+# Clean up previous deployment source
+# =============================================================================
+SOURCE_DIR="/tmp/codedeploy-source"
+if [ -d "$SOURCE_DIR" ]; then
+    echo "Cleaning up previous source: $SOURCE_DIR"
+    rm -rf "$SOURCE_DIR"
+fi
+mkdir -p "$SOURCE_DIR"
+
+echo ""
+echo "✅ Before install complete"
+echo "   Instance ID: $INSTANCE_ID"
+echo "   Environment: $ENV"
+echo "   Container: $CONTAINER_NAME"

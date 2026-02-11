@@ -1,0 +1,131 @@
+# =============================================================================
+# Ansible Playbook - Deploy Applications
+# =============================================================================
+---
+- name: Deploy MyProject Applications
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    git_repos:
+      app-api: "https://bitbucket.org/yourorg/app-api.git"
+      app-web: "https://bitbucket.org/yourorg/app-web.git"
+      app-admin: "https://bitbucket.org/yourorg/app-admin.git"
+      app-dashboard: "https://bitbucket.org/yourorg/app-dashboard.git"
+    
+    projects:
+      - app-api
+      - app-web
+      - app-admin
+      - app-dashboard
+
+  tasks:
+    # Clone repositories
+    - name: Clone project repositories
+      become_user: ubuntu
+      git:
+        repo: "{{ git_repos[item] }}"
+        dest: "{{ app_directory }}/apps/{{ item }}"
+        version: "{{ 'develop' if environment == 'dev' else 'staging' }}"
+        force: yes
+      loop: "{{ projects }}"
+      ignore_errors: true
+
+    # Copy Docker files
+    - name: Copy Docker configuration files
+      copy:
+        src: "{{ playbook_dir }}/../../docker/"
+        dest: "{{ app_directory }}/docker/"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    # Copy docker-compose file
+    - name: Copy docker-compose file
+      copy:
+        src: "{{ playbook_dir }}/../../{{ compose_file }}"
+        dest: "{{ app_directory }}/docker-compose.yml"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    # Create .env file from infrastructure
+    - name: Create .env file
+      template:
+        src: "{{ playbook_dir }}/../templates/env.j2"
+        dest: "{{ app_directory }}/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+      when: rds_host is defined and redis_host is defined
+
+    # Set permissions for Laravel storage directories
+    - name: Set Laravel storage permissions
+      file:
+        path: "{{ app_directory }}/apps/{{ item }}/storage"
+        state: directory
+        mode: '0775'
+        recurse: yes
+      loop: "{{ projects }}"
+      ignore_errors: true
+
+    - name: Set Laravel bootstrap/cache permissions
+      file:
+        path: "{{ app_directory }}/apps/{{ item }}/bootstrap/cache"
+        state: directory
+        mode: '0775'
+        recurse: yes
+      loop: "{{ projects }}"
+      ignore_errors: true
+
+    # Build and start containers
+    - name: Build Docker containers
+      become_user: ubuntu
+      command: docker-compose build
+      args:
+        chdir: "{{ app_directory }}"
+      environment:
+        RDS_HOST: "{{ rds_host | default('localhost') }}"
+        RDS_USERNAME: "{{ rds_username | default('admin') }}"
+        RDS_PASSWORD: "{{ rds_password | default('password') }}"
+        REDIS_HOST: "{{ redis_host | default('localhost') }}"
+
+    - name: Start Docker containers
+      become_user: ubuntu
+      command: docker-compose up -d
+      args:
+        chdir: "{{ app_directory }}"
+      environment:
+        RDS_HOST: "{{ rds_host | default('localhost') }}"
+        RDS_USERNAME: "{{ rds_username | default('admin') }}"
+        RDS_PASSWORD: "{{ rds_password | default('password') }}"
+        REDIS_HOST: "{{ redis_host | default('localhost') }}"
+
+    # Wait for containers to start
+    - name: Wait for containers to be ready
+      pause:
+        seconds: 30
+
+    # Check container status
+    - name: Check container status
+      become_user: ubuntu
+      command: docker-compose ps
+      args:
+        chdir: "{{ app_directory }}"
+      register: container_status
+
+    - name: Display container status
+      debug:
+        msg: "{{ container_status.stdout_lines }}"
+
+    - name: Display completion message
+      debug:
+        msg:
+          - "Applications deployed to {{ environment }}!"
+          - "App Directory: {{ app_directory }}"
+          - ""
+          - "Commands:"
+          - "  View logs: docker-compose logs -f"
+          - "  Restart: docker-compose restart"
+          - "  Stop: docker-compose down"

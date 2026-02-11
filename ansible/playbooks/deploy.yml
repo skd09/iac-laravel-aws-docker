@@ -1,0 +1,37 @@
+# =============================================================================
+# Deploy Applications Playbook
+# Usage: ansible-playbook -i inventories/dev.ini playbooks/deploy.yml
+# =============================================================================
+
+- name: Deploy MyProject Applications
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - ../group_vars/all.yml
+    - ../group_vars/{{ env_name }}.yml
+
+  vars:
+    env_name: "{{ lookup('env', 'TARGET_ENV') | default('dev', true) }}"
+
+  pre_tasks:
+    - name: Ensure Docker network exists
+      command: docker network create myproject-network
+      register: network_result
+      failed_when: false
+      changed_when: network_result.rc == 0
+
+  roles:
+    - ssm
+    - deploy
+
+  post_tasks:
+    - name: Display container status
+      command: docker ps --format "table {% raw %}{{.Names}}\t{{.Status}}\t{{.Ports}}{% endraw %}"
+      register: docker_status
+      changed_when: false
+
+    - name: Show running containers
+      debug:
+        msg: "{{ docker_status.stdout_lines }}"

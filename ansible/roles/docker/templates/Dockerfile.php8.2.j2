@@ -1,0 +1,44 @@
+# =============================================================================
+# MyProject PHP 8.2 (Laravel 10)
+# =============================================================================
+
+FROM php:8.2-apache
+
+LABEL maintainer="myproject.devs@gmail.com"
+LABEL php.version="8.2"
+
+RUN apt-get update && apt-get install -y \
+    git curl libpng-dev libonig-dev libxml2-dev libzip-dev \
+    libcurl4-openssl-dev libssl-dev zip unzip supervisor \
+    default-mysql-client redis-tools cron \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN docker-php-ext-install \
+    pdo_mysql mbstring exif pcntl bcmath gd zip opcache curl
+
+RUN pecl install redis && docker-php-ext-enable redis
+
+COPY --from=composer:2.6 /usr/bin/composer /usr/bin/composer
+
+RUN a2enmod rewrite headers ssl
+
+ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf
+RUN sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
+
+RUN echo "memory_limit=256M" > /usr/local/etc/php/conf.d/custom.ini && \
+    echo "upload_max_filesize=100M" >> /usr/local/etc/php/conf.d/custom.ini && \
+    echo "post_max_size=100M" >> /usr/local/etc/php/conf.d/custom.ini && \
+    echo "max_execution_time=300" >> /usr/local/etc/php/conf.d/custom.ini
+
+WORKDIR /var/www/html
+
+RUN mkdir -p /var/www/html/public && \
+    echo '<?php echo "OK";' > /var/www/html/public/health.php
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost/health.php || exit 1
+
+EXPOSE 80
+
+CMD ["apache2-foreground"]

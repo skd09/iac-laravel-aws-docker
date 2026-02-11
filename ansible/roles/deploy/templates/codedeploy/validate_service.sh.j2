@@ -1,0 +1,183 @@
+#!/bin/bash
+# =============================================================================
+# CodeDeploy - Validate Service
+# =============================================================================
+# This script runs AFTER application_start.sh.
+# Purpose:
+#   1. Verify container is running
+#   2. Perform health check on application
+#   3. Report deployment status
+# =============================================================================
+
+set -e
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           CODEDEPLOY - VALIDATE SERVICE                      ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+
+# =============================================================================
+# Load configuration from previous hooks
+# =============================================================================
+INSTANCE_ID=$(cat /tmp/codedeploy_instance_id)
+ENV=$(cat /tmp/codedeploy_env 2>/dev/null || echo "dev")
+APP_DIR=$(cat /tmp/codedeploy_app_dir)
+CONTAINER_NAME=$(cat /tmp/codedeploy_container_name 2>/dev/null || echo "${INSTANCE_ID}-${ENV}-app")
+
+echo ""
+echo "Configuration:"
+echo "  Instance ID: $INSTANCE_ID"
+echo "  Environment: $ENV"
+echo "  App Directory: $APP_DIR"
+echo "  Container: $CONTAINER_NAME"
+
+cd "$APP_DIR"
+
+# =============================================================================
+# Get port from instance mapping
+# =============================================================================
+if [ -f /opt/scripts/instance-mapping.sh ]; then
+    source /opt/scripts/instance-mapping.sh
+    get_instance_config "$INSTANCE_ID" "$ENV"
+    PORT="$DOCKER_PORT"
+else
+    # Fallback: try to get port from running container
+    PORT=$(docker port "$CONTAINER_NAME" 80 2>/dev/null | cut -d: -f2)
+fi
+
+if [ -z "$PORT" ]; then
+    echo "❌ ERROR: Could not determine container port"
+    echo ""
+    echo "Container status:"
+    docker ps -a | grep "$CONTAINER_NAME" || echo "Container not found"
+    exit 1
+fi
+
+echo "  Health Check Port: $PORT"
+
+# =============================================================================
+# Verify container is running
+# =============================================================================
+echo ""
+echo "Checking container status..."
+
+if ! docker ps --format '{% raw %}{{.Names}}{% endraw %}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo "❌ ERROR: Container is not running!"
+    echo ""
+    echo "Container logs:"
+    docker logs "$CONTAINER_NAME" 2>&1 | tail -50
+    exit 1
+fi
+
+CONTAINER_STATUS=$(docker inspect --format='{% raw %}{{.State.Status}}{% endraw %}' "$CONTAINER_NAME")
+echo "  Container status: $CONTAINER_STATUS"
+
+if [ "$CONTAINER_STATUS" != "running" ]; then
+    echo "❌ ERROR: Container is not in running state!"
+    docker logs "$CONTAINER_NAME" 2>&1 | tail -50
+    exit 1
+fi
+
+# =============================================================================
+# Health check with retries
+# =============================================================================
+echo ""
+echo "Performing health check..."
+
+MAX_RETRIES=30
+RETRY_INTERVAL=2
+HEALTH_URL="http://localhost:${PORT}/health.php"
+
+echo "  URL: $HEALTH_URL"
+echo "  Max retries: $MAX_RETRIES"
+echo ""
+
+for i in $(seq 1 $MAX_RETRIES); do
+    echo -n "  Attempt $i/$MAX_RETRIES... "
+    
+    HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "$HEALTH_URL" 2>/dev/null || echo "000")
+    
+    if [ "$HTTP_CODE" = "200" ]; then
+        echo "✅ HTTP $HTTP_CODE"
+        echo ""
+        echo "╔═══════════════════════════════════════════════════════════════╗"
+        echo "║           ✅ HEALTH CHECK PASSED!                            ║"
+        echo "╚═══════════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "Deployment successful!"
+        echo "  App: $INSTANCE_ID"
+        echo "  Environment: $ENV"
+        echo "  URL: ${APP_URL:-http://localhost:$PORT}"
+        echo "  Container: $CONTAINER_NAME"
+        
+        # Clean up temp files
+        rm -f /tmp/codedeploy_instance_id
+        rm -f /tmp/codedeploy_env
+        rm -f /tmp/codedeploy_app_dir
+        rm -f /tmp/codedeploy_php_version
+        rm -f /tmp/codedeploy_container_name
+        
+        exit 0
+    fi
+    
+    echo "HTTP $HTTP_CODE (waiting...)"
+    sleep $RETRY_INTERVAL
+done
+
+# =============================================================================
+# Health check failed
+# =============================================================================
+echo ""
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           ❌ HEALTH CHECK FAILED!                            ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+echo "The application failed to respond to health checks after $MAX_RETRIES attempts."
+echo ""
+echo "Diagnostics:"
+echo "─────────────────────────────────────────────────────────────────"
+
+# Check if health.php exists
+echo ""
+echo "1. Checking health.php exists:"
+if docker exec "$CONTAINER_NAME" test -f /var/www/html/public/health.php; then
+    echo "   ✅ health.php exists"
+else
+    echo "   ❌ health.php NOT FOUND!"
+    echo "   Create public/health.php in your Laravel repo."
+fi
+
+# Check Laravel logs
+echo ""
+echo "2. Laravel logs (last 20 lines):"
+docker exec "$CONTAINER_NAME" cat /var/www/html/storage/logs/laravel.log 2>/dev/null | tail -20 || echo "   No Laravel logs found"
+
+# Check container logs
+echo ""
+echo "3. Container logs (last 30 lines):"
+docker logs "$CONTAINER_NAME" 2>&1 | tail -30
+
+# Check .env
+echo ""
+echo "4. Checking .env file:"
+if docker exec "$CONTAINER_NAME" test -f /var/www/html/.env; then
+    echo "   ✅ .env exists"
+    echo "   APP_URL: $(docker exec "$CONTAINER_NAME" grep APP_URL /var/www/html/.env 2>/dev/null || echo 'not set')"
+    echo "   APP_ENV: $(docker exec "$CONTAINER_NAME" grep APP_ENV /var/www/html/.env 2>/dev/null || echo 'not set')"
+else
+    echo "   ❌ .env NOT FOUND!"
+fi
+
+# Check vendor directory
+echo ""
+echo "5. Checking vendor directory:"
+if docker exec "$CONTAINER_NAME" test -d /var/www/html/vendor; then
+    echo "   ✅ vendor directory exists"
+else
+    echo "   ❌ vendor directory NOT FOUND! Composer install may have failed."
+fi
+
+echo ""
+echo "─────────────────────────────────────────────────────────────────"
+echo "Deployment FAILED. CodeDeploy will trigger auto-rollback if enabled."
+
+exit 1

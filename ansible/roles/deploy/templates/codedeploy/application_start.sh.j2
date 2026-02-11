@@ -1,0 +1,213 @@
+#!/bin/bash
+# =============================================================================
+# CodeDeploy - Application Start
+# =============================================================================
+# This script runs AFTER after_install.sh.
+# Purpose:
+#   1. Generate Protobuf files (app-worker only)
+#   2. Build and start Docker container
+#   3. Install Composer dependencies
+#   4. Run Laravel migrations
+#   5. Clear and rebuild caches
+# =============================================================================
+
+set -e
+
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           CODEDEPLOY - APPLICATION START                     ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+
+# =============================================================================
+# Load configuration from previous hooks
+# =============================================================================
+INSTANCE_ID=$(cat /tmp/codedeploy_instance_id)
+ENV=$(cat /tmp/codedeploy_env 2>/dev/null || echo "dev")
+APP_DIR=$(cat /tmp/codedeploy_app_dir)
+PHP_VERSION=$(cat /tmp/codedeploy_php_version 2>/dev/null || echo "8.2")
+CONTAINER_NAME=$(cat /tmp/codedeploy_container_name 2>/dev/null || echo "${INSTANCE_ID}-${ENV}-app")
+
+echo ""
+echo "Configuration:"
+echo "  Instance ID: $INSTANCE_ID"
+echo "  Environment: $ENV"
+echo "  App Directory: $APP_DIR"
+echo "  PHP Version: $PHP_VERSION"
+echo "  Container: $CONTAINER_NAME"
+
+cd "$APP_DIR"
+
+# =============================================================================
+# Generate Protobuf files (app-worker only)
+# Must run BEFORE docker build so files are included in container
+# =============================================================================
+if [ "$INSTANCE_ID" = "app-worker" ]; then
+    echo ""
+    echo "─────────────────────────────────────────────────────────────────"
+    echo "  Generating Protobuf files"
+    echo "─────────────────────────────────────────────────────────────────"
+    
+    PROTOBUF_SCRIPT="/opt/scripts/codedeploy/generate_protobuf.sh"
+    
+    if [ -f "$PROTOBUF_SCRIPT" ]; then
+        if bash "$PROTOBUF_SCRIPT" "$INSTANCE_ID" "$APP_DIR"; then
+            echo "✅ Protobuf generation complete"
+        else
+            echo "⚠️  Protobuf generation had issues (continuing anyway)"
+        fi
+    else
+        echo "⚠️  Protobuf script not found: $PROTOBUF_SCRIPT"
+    fi
+    echo ""
+fi
+
+# =============================================================================
+# Stop existing container (if still running)
+# =============================================================================
+echo ""
+echo "Stopping any existing container..."
+docker-compose -f docker-compose.server.yml down 2>/dev/null || true
+docker stop "$CONTAINER_NAME" 2>/dev/null || true
+docker rm "$CONTAINER_NAME" 2>/dev/null || true
+
+# =============================================================================
+# Build and start container
+# =============================================================================
+echo ""
+echo "Building Docker container..."
+docker-compose -f docker-compose.server.yml build --no-cache
+
+echo ""
+echo "Starting Docker container..."
+docker-compose -f docker-compose.server.yml up -d
+
+# =============================================================================
+# Wait for container to be ready
+# =============================================================================
+echo ""
+echo "Waiting for container to start..."
+
+MAX_WAIT=60
+WAIT_INTERVAL=2
+ELAPSED=0
+
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+    if docker ps --format '{% raw %}{{.Names}}{% endraw %}' | grep -q "^${CONTAINER_NAME}$"; then
+        CONTAINER_STATUS=$(docker inspect --format='{% raw %}{{.State.Status}}{% endraw %}' "$CONTAINER_NAME" 2>/dev/null)
+        if [ "$CONTAINER_STATUS" = "running" ]; then
+            echo "✅ Container is running"
+            break
+        fi
+    fi
+    
+    echo "  Waiting... ($ELAPSED/$MAX_WAIT seconds)"
+    sleep $WAIT_INTERVAL
+    ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+done
+
+if [ $ELAPSED -ge $MAX_WAIT ]; then
+    echo "❌ Container failed to start within $MAX_WAIT seconds"
+    echo "Container logs:"
+    docker logs "$CONTAINER_NAME" 2>&1 | tail -50
+    exit 1
+fi
+
+# Give container a moment to fully initialize
+sleep 5
+
+# =============================================================================
+# Install Composer dependencies
+# =============================================================================
+echo ""
+echo "─────────────────────────────────────────────────────────────────"
+echo "  Installing Composer Dependencies"
+echo "─────────────────────────────────────────────────────────────────"
+
+docker exec "$CONTAINER_NAME" composer install \
+    --no-interaction \
+    --no-dev \
+    --optimize-autoloader \
+    --no-progress \
+    2>&1 || {
+        echo "⚠️  Composer install had issues, trying with --ignore-platform-reqs..."
+        docker exec "$CONTAINER_NAME" composer install \
+            --no-interaction \
+            --no-dev \
+            --optimize-autoloader \
+            --no-progress \
+            --ignore-platform-reqs \
+            2>&1 || true
+    }
+
+# =============================================================================
+# Run Laravel commands
+# =============================================================================
+echo ""
+echo "─────────────────────────────────────────────────────────────────"
+echo "  Running Laravel Commands"
+echo "─────────────────────────────────────────────────────────────────"
+
+# Check APP_KEY - only generate if empty (don't use --force)
+echo "Checking APP_KEY..."
+if docker exec "$CONTAINER_NAME" grep -q "^APP_KEY=$" /var/www/html/.env 2>/dev/null || \
+   ! docker exec "$CONTAINER_NAME" grep -q "^APP_KEY=" /var/www/html/.env 2>/dev/null; then
+    echo "  APP_KEY not set, generating..."
+    docker exec "$CONTAINER_NAME" php artisan key:generate 2>/dev/null || true
+else
+    echo "  APP_KEY already set, skipping"
+fi
+
+# Clear all caches first
+echo "Clearing caches..."
+docker exec "$CONTAINER_NAME" php artisan config:clear 2>/dev/null || true
+docker exec "$CONTAINER_NAME" php artisan cache:clear 2>/dev/null || true
+docker exec "$CONTAINER_NAME" php artisan route:clear 2>/dev/null || true
+docker exec "$CONTAINER_NAME" php artisan view:clear 2>/dev/null || true
+
+# Create storage symlink
+echo "Creating storage link..."
+docker exec "$CONTAINER_NAME" php artisan storage:link 2>/dev/null || true
+
+# Run migrations
+echo "Running migrations..."
+docker exec "$CONTAINER_NAME" php artisan migrate --force 2>&1 || {
+    echo "  ⚠️  Migration had issues (may be normal for first deploy)"
+}
+
+# Rebuild caches for non-dev environments
+if [ "$ENV" != "dev" ]; then
+    echo "Building production caches..."
+    docker exec "$CONTAINER_NAME" php artisan config:cache 2>/dev/null || true
+    docker exec "$CONTAINER_NAME" php artisan route:cache 2>/dev/null || true
+    docker exec "$CONTAINER_NAME" php artisan view:cache 2>/dev/null || true
+else
+    echo "Skipping cache build for dev environment"
+fi
+
+# =============================================================================
+# Fix permissions inside container
+# =============================================================================
+echo ""
+echo "Setting container permissions..."
+docker exec "$CONTAINER_NAME" chown -R www-data:www-data storage bootstrap/cache 2>/dev/null || true
+docker exec "$CONTAINER_NAME" chmod -R 775 storage bootstrap/cache 2>/dev/null || true
+
+# =============================================================================
+# Verify container is running
+# =============================================================================
+echo ""
+echo "Verifying container status..."
+
+if docker ps --format '{% raw %}{{.Names}}{% endraw %}' | grep -q "^${CONTAINER_NAME}$"; then
+    CONTAINER_STATUS=$(docker inspect --format='{% raw %}{{.State.Status}}{% endraw %}' "$CONTAINER_NAME")
+    echo "  Container: $CONTAINER_NAME"
+    echo "  Status: $CONTAINER_STATUS"
+else
+    echo "❌ Container is not running!"
+    docker logs "$CONTAINER_NAME" 2>&1 | tail -30
+    exit 1
+fi
+
+echo ""
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           ✅ APPLICATION START COMPLETE                      ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"

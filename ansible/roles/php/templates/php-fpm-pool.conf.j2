@@ -1,0 +1,26 @@
+; =============================================================================
+; PHP-FPM Pool Configuration - PHP {{ item }}
+; =============================================================================
+
+[www]
+user = www-data
+group = www-data
+
+listen = /var/run/php/php{{ item }}-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 50
+pm.start_servers = 5
+pm.min_spare_servers = 5
+pm.max_spare_servers = 35
+pm.max_requests = 500
+
+; Error logging
+php_admin_value[error_log] = /var/log/php{{ item }}-fpm.error.log
+php_admin_flag[log_errors] = on
+
+; Security
+security.limit_extensions = .php

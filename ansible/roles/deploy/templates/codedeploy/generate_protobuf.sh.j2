@@ -1,0 +1,114 @@
+#!/bin/bash
+# =============================================================================
+# CodeDeploy - Generate Protobuf (app-worker only)
+# =============================================================================
+# Generates PHP protobuf classes from .proto files.
+# Called by application_start.sh for app-worker instance.
+#
+# Arguments: $1 = INSTANCE_ID, $2 = APP_DIR
+# =============================================================================
+
+set -e
+
+INSTANCE_ID="${1:-unknown}"
+APP_DIR="${2:-{{ apps_base_dir }}/$INSTANCE_ID}"
+
+echo "=== Generate Protobuf: $INSTANCE_ID ==="
+
+# Only run for app-worker
+if [ "$INSTANCE_ID" != "app-worker" ]; then
+    echo "Skipping protobuf generation (not app-worker)"
+    exit 0
+fi
+
+cd "$APP_DIR"
+
+# =============================================================================
+# Check prerequisites
+# =============================================================================
+echo ""
+echo "Checking prerequisites..."
+
+# Check protoc is installed
+if ! command -v protoc &> /dev/null; then
+    echo "⚠️  WARNING: protoc not installed!"
+    echo "    Install with: sudo apt install protobuf-compiler"
+    echo "    Skipping protobuf generation"
+    exit 0
+fi
+
+echo "  protoc version: $(protoc --version)"
+
+# Check proto file exists
+PROTO_FILE="openapi/iot-device-api.proto"
+if [ ! -f "$PROTO_FILE" ]; then
+    echo "⚠️  WARNING: Proto file not found: $PROTO_FILE"
+    echo "    Skipping protobuf generation"
+    exit 0
+fi
+echo "  Proto file: $PROTO_FILE ✓"
+
+# =============================================================================
+# Clean old generated files
+# =============================================================================
+echo ""
+echo "Cleaning old generated files..."
+rm -rf protobuf/generated/* 2>/dev/null || true
+rm -rf protobuf/Protobuf/ 2>/dev/null || true
+mkdir -p protobuf/generated
+
+# =============================================================================
+# Run protoc compiler
+# =============================================================================
+echo ""
+echo "Running protoc compiler..."
+protoc --php_out=protobuf/ "$PROTO_FILE"
+
+# =============================================================================
+# Move files to correct location
+# =============================================================================
+echo ""
+echo "Moving files to correct location..."
+
+if [ -d "protobuf/Protobuf/Generated" ]; then
+    mv protobuf/Protobuf/Generated/* protobuf/generated/
+    rm -rf protobuf/Protobuf
+    echo "  ✓ Files moved from protobuf/Protobuf/Generated/"
+elif [ -d "protobuf/Protobuf" ]; then
+    find protobuf/Protobuf -name "*.php" -exec mv {} protobuf/generated/ \;
+    rm -rf protobuf/Protobuf
+    echo "  ✓ Files moved from protobuf/Protobuf/"
+else
+    if ls protobuf/*.php 1> /dev/null 2>&1; then
+        mv protobuf/*.php protobuf/generated/
+        echo "  ✓ Files moved to protobuf/generated/"
+    else
+        echo "  ⚠️  No PHP files generated"
+    fi
+fi
+
+# =============================================================================
+# Set permissions
+# =============================================================================
+chown -R ubuntu:ubuntu protobuf/generated/
+chmod -R 755 protobuf/generated/
+
+# =============================================================================
+# Summary
+# =============================================================================
+FILE_COUNT=$(find protobuf/generated -name "*.php" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+echo ""
+echo "╔═══════════════════════════════════════════════════════════════╗"
+echo "║           ✅ PROTOBUF GENERATION COMPLETE                    ║"
+echo "╚═══════════════════════════════════════════════════════════════╝"
+echo ""
+echo "  Generated $FILE_COUNT PHP files"
+echo "  Location: protobuf/generated/"
+echo "  Namespace: Protobuf\\Generated"
+
+if [ "$FILE_COUNT" -gt 0 ]; then
+    echo ""
+    echo "Files generated:"
+    ls -1 protobuf/generated/*.php 2>/dev/null | head -10 | sed 's/^/    /'
+fi

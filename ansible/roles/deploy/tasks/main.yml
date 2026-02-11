@@ -1,0 +1,164 @@
+---
+# =============================================================================
+# Deploy Role - Create Directories and CodeDeploy Scripts
+# =============================================================================
+# This role sets up the EC2 server for CodeDeploy deployments:
+#   1. Creates app directories under /var/www/{app}
+#   2. Creates CodeDeploy lifecycle hook scripts in /opt/scripts/codedeploy/
+#   3. Creates instance mapping script
+#   4. Creates Docker network
+#
+# Deployment Flow:
+#   Bitbucket → S3 → CodeDeploy → wrapper.sh → EC2 Scripts → Docker Container
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Create App Directories
+# -----------------------------------------------------------------------------
+
+- name: Create app instance directories
+  file:
+    path: "{{ apps_base_dir }}/{{ item.1.id }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+
+- name: Create public directory for each app
+  file:
+    path: "{{ apps_base_dir }}/{{ item.1.id }}/public"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: "0755"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+
+- name: Create storage directory
+  file:
+    path: "{{ apps_base_dir }}/{{ item.1.id }}/storage"
+    state: directory
+    owner: ubuntu
+    group: www-data
+    mode: "0775"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+
+- name: Create storage subdirectories
+  file:
+    path: "{{ apps_base_dir }}/{{ item.0.1.id }}/storage/{{ item.1 }}"
+    state: directory
+    owner: ubuntu
+    group: www-data
+    mode: "0775"
+  loop: "{{ apps | subelements('instances') | product(storage_subdirs) | list }}"
+  loop_control:
+    label: "{{ item.0.1.id }}/{{ item.1 }}"
+  vars:
+    storage_subdirs:
+      - logs
+      - framework/cache/data
+      - framework/sessions
+      - framework/views
+      - app/public
+
+- name: Create bootstrap/cache directory
+  file:
+    path: "{{ apps_base_dir }}/{{ item.1.id }}/bootstrap/cache"
+    state: directory
+    owner: ubuntu
+    group: www-data
+    mode: "0775"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+
+- name: Create placeholder health.php
+  template:
+    src: health.php.j2
+    dest: "{{ apps_base_dir }}/{{ item.1.id }}/public/health.php"
+    owner: ubuntu
+    group: ubuntu
+    mode: "0644"
+  loop: "{{ apps | subelements('instances') }}"
+  loop_control:
+    label: "{{ item.1.id }}"
+
+# -----------------------------------------------------------------------------
+# Create Docker Network
+# -----------------------------------------------------------------------------
+
+- name: Check if Docker network exists
+  shell: docker network ls --format "{% raw %}{{.Name}}{% endraw %}" | grep -q "^myproject-network$"
+  register: docker_network_check
+  failed_when: false
+  changed_when: false
+
+- name: Create shared Docker network
+  command: docker network create myproject-network
+  when: docker_network_check.rc != 0
+
+# -----------------------------------------------------------------------------
+# Create Scripts Directories
+# -----------------------------------------------------------------------------
+
+- name: Create scripts directory
+  file:
+    path: /opt/scripts
+    state: directory
+    mode: "0755"
+
+- name: Create CodeDeploy scripts directory
+  file:
+    path: /opt/scripts/codedeploy
+    state: directory
+    mode: "0755"
+
+# -----------------------------------------------------------------------------
+# Deploy Instance Mapping Script
+# -----------------------------------------------------------------------------
+
+- name: Deploy instance-mapping.sh
+  template:
+    src: instance-mapping.sh.j2
+    dest: /opt/scripts/instance-mapping.sh
+    mode: "0755"
+
+# -----------------------------------------------------------------------------
+# Deploy CodeDeploy Scripts from Templates
+# -----------------------------------------------------------------------------
+
+- name: Deploy before_install.sh
+  template:
+    src: codedeploy/before_install.sh.j2
+    dest: /opt/scripts/codedeploy/before_install.sh
+    mode: "0755"
+
+- name: Deploy after_install.sh
+  template:
+    src: codedeploy/after_install.sh.j2
+    dest: /opt/scripts/codedeploy/after_install.sh
+    mode: "0755"
+
+- name: Deploy application_start.sh
+  template:
+    src: codedeploy/application_start.sh.j2
+    dest: /opt/scripts/codedeploy/application_start.sh
+    mode: "0755"
+
+- name: Deploy validate_service.sh
+  template:
+    src: codedeploy/validate_service.sh.j2
+    dest: /opt/scripts/codedeploy/validate_service.sh
+    mode: "0755"
+
+- name: Deploy generate_protobuf.sh
+  template:
+    src: codedeploy/generate_protobuf.sh.j2
+    dest: /opt/scripts/codedeploy/generate_protobuf.sh
+    mode: "0755"

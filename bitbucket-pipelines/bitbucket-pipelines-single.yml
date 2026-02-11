@@ -1,0 +1,54 @@
+image: atlassian/default-image:3
+
+definitions:
+  steps:
+    - step: &deploy-dev
+        name: Deploy to DEV
+        deployment: development
+        oidc: true
+        script:
+          - echo "Deploying ${APP_NAME} to DEV..."
+          - pipe: atlassian/aws-code-deploy:1.1.1
+            variables:
+              AWS_DEFAULT_REGION: 'ca-central-1'
+              AWS_OIDC_ROLE_ARN: 'arn:aws:iam::123456789012:role/BitbucketOIDCDeployRole'
+              APPLICATION_NAME: 'myproject-dev-apps'
+              DEPLOYMENT_GROUP: 'myproject-dev-${APP_NAME}'
+              S3_BUCKET: 'myproject-dev-codedeploy-artifacts'
+              COMMAND: 'upload'
+              IGNORE_APPLICATION_STOP_FAILURES: 'true'
+              FILE_EXISTS_BEHAVIOR: 'OVERWRITE'
+
+    - step: &deploy-stag
+        name: Deploy to STAG
+        deployment: staging
+        oidc: true
+        script:
+          - echo "Deploying ${APP_NAME} to STAG..."
+          - pipe: atlassian/aws-code-deploy:1.1.1
+            variables:
+              AWS_DEFAULT_REGION: 'ca-central-1'
+              AWS_OIDC_ROLE_ARN: 'arn:aws:iam::123456789012:role/BitbucketOIDCDeployRole'
+              APPLICATION_NAME: 'myproject-stag-apps'
+              DEPLOYMENT_GROUP: 'myproject-stag-${APP_NAME}'
+              S3_BUCKET: 'myproject-stag-codedeploy-artifacts'
+              COMMAND: 'upload'
+              IGNORE_APPLICATION_STOP_FAILURES: 'true'
+              FILE_EXISTS_BEHAVIOR: 'OVERWRITE'
+
+pipelines:
+  branches:
+    develop:
+      - step: *deploy-dev
+    dev:
+      - step: *deploy-dev
+    main:
+      - step: *deploy-stag
+    master:
+      - step: *deploy-stag
+
+  custom:
+    deploy-to-dev:
+      - step: *deploy-dev
+    deploy-to-stag:
+      - step: *deploy-stag

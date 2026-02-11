@@ -1,0 +1,63 @@
+# =============================================================================
+# Laravel AWS DevOps - Git Ignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Ansible
+# -----------------------------------------------------------------------------
+# Inventory files (contain real IP addresses)
+ansible/inventories/*.ini
+!ansible/inventories/*.ini.example
+
+# Vault/Secret files
+ansible/group_vars/*_vault.yml
+ansible/group_vars/all_project.yml
+!ansible/group_vars/*_vault.yml.example
+!ansible/group_vars/all_project.yml.example
+
+# Retry files
+*.retry
+
+# -----------------------------------------------------------------------------
+# Terraform
+# -----------------------------------------------------------------------------
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+crash.log
+*.tfplan
+terraform/environments/*/keys/
+terraform/environments/*/terraform.tfvars
+terraform/environments/*/terraform.auto.tfvars
+
+# -----------------------------------------------------------------------------
+# Secrets & Keys
+# -----------------------------------------------------------------------------
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+secrets/
+
+# -----------------------------------------------------------------------------
+# IDE & OS
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbbs.db
+__MACOSX/
+
+# -----------------------------------------------------------------------------
+# Logs & Temp
+# -----------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+*.zip

@@ -1,0 +1,14 @@
+# =============================================================================
+# DEV Environment Inventory
+# =============================================================================
+# Copy this file to dev.ini and update the IP address:
+#   cp dev.ini.example dev.ini
+#   nano dev.ini  # Update YOUR_DEV_EC2_IP
+# =============================================================================
+
+[dev]
+dev-server ansible_host=YOUR_DEV_EC2_IP ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/myproject-dev-key.pem
+
+[dev:vars]
+env=dev
+ansible_python_interpreter=/usr/bin/python3
